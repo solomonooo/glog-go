@@ -109,7 +109,7 @@ const severityChar = "IWEF"
 
 var severityName = []string{
 	infoLog:    "INFO",
-	warningLog: "WARNING",
+	warningLog: "WARN",
 	errorLog:   "ERROR",
 	fatalLog:   "FATAL",
 }
@@ -559,28 +559,32 @@ func (l *loggingT) formatHeader(s severity, file string, line int) *buffer {
 
 	// Avoid Fprintf, for speed. The format is so simple that we can do it quickly by hand.
 	// It's worth about 3X. Fprintf is hard.
-	_, month, day := now.Date()
+	year, month, day := now.Date()
 	hour, minute, second := now.Clock()
 	// Lmmdd hh:mm:ss.uuuuuu threadid file:line]
-	buf.tmp[0] = severityChar[s]
-	buf.twoDigits(1, int(month))
-	buf.twoDigits(3, day)
-	buf.tmp[5] = ' '
-	buf.twoDigits(6, hour)
-	buf.tmp[8] = ':'
-	buf.twoDigits(9, minute)
-	buf.tmp[11] = ':'
-	buf.twoDigits(12, second)
-	buf.tmp[14] = '.'
-	buf.nDigits(6, 15, now.Nanosecond()/1000, '0')
-	buf.tmp[21] = ' '
-	buf.nDigits(7, 22, pid, ' ') // TODO: should be TID
-	buf.tmp[29] = ' '
-	buf.Write(buf.tmp[:30])
+	offset := copy(buf.tmp[0:], []byte(severityName[s]))
+	buf.tmp[offset] = ' '
+	buf.fourDigits(offset+1, int(year))
+	buf.tmp[offset+5] = '-'
+	buf.twoDigits(offset+6, int(month))
+	buf.tmp[offset+8] = '-'
+	buf.twoDigits(offset+9, day)
+	buf.tmp[offset+11] = ' '
+	buf.twoDigits(offset+12, hour)
+	buf.tmp[offset+14] = ':'
+	buf.twoDigits(offset+15, minute)
+	buf.tmp[offset+17] = ':'
+	buf.twoDigits(offset+18, second)
+	buf.tmp[offset+20] = '.'
+	buf.nDigits(6, offset+21, now.Nanosecond()/1000, '0')
+	buf.tmp[offset+27] = ' '
+	buf.nDigits(7, offset+28, pid, ' ') // TODO: should be TID
+	buf.tmp[offset+35] = ' '
+	buf.Write(buf.tmp[:offset+36])
 	buf.WriteString(file)
 	buf.tmp[0] = ':'
 	n := buf.someDigits(1, line)
-	buf.tmp[n+1] = ']'
+	buf.tmp[n+1] = '>'
 	buf.tmp[n+2] = ' '
 	buf.Write(buf.tmp[:n+3])
 	return buf
@@ -592,6 +596,16 @@ const digits = "0123456789"
 
 // twoDigits formats a zero-prefixed two-digit integer at buf.tmp[i].
 func (buf *buffer) twoDigits(i, d int) {
+	buf.tmp[i+1] = digits[d%10]
+	d /= 10
+	buf.tmp[i] = digits[d%10]
+}
+
+func (buf *buffer) fourDigits(i, d int) {
+	buf.tmp[i+3] = digits[d%10]
+	d /= 10
+	buf.tmp[i+2] = digits[d%10]
+	d /= 10
 	buf.tmp[i+1] = digits[d%10]
 	d /= 10
 	buf.tmp[i] = digits[d%10]
@@ -804,16 +818,58 @@ type syncBuffer struct {
 	*bufio.Writer
 	file   *os.File
 	sev    severity
-	nbytes uint64 // The number of bytes written to this file
+	nbytes uint64    // The number of bytes written to this file
+	time   time.Time // rotate time
 }
 
 func (sb *syncBuffer) Sync() error {
 	return sb.file.Sync()
 }
 
+func (sb *syncBuffer) Time() time.Time {
+	return sb.time
+}
+
+func (sb *syncBuffer) timeTruncate() {
+	switch *splitType {
+	case 1:
+		sb.time = sb.time.Truncate(time.Duration(*splitValue) * time.Minute)
+	case 2:
+		sb.time = sb.time.Truncate(time.Duration(*splitValue) * time.Hour)
+	case 3:
+		sb.time = sb.time.Truncate(time.Duration(*splitValue*24) * time.Hour)
+	}
+}
+
+func (sb *syncBuffer) timeHasChanged() bool {
+	cur := time.Now()
+	if 0 == *splitType || 0 == *splitValue {
+		sb.time = cur
+		return false
+	} else if 1 == *splitType {
+		//min
+		cur = cur.Truncate(time.Duration(*splitValue) * time.Minute)
+	} else if 2 == *splitType {
+		//hour
+		cur = cur.Truncate(time.Duration(*splitValue) * time.Hour)
+	} else if 3 == *splitType {
+		//day
+		cur = cur.Truncate(time.Duration(*splitValue*24) * time.Hour)
+	} else {
+		sb.time = cur
+		return false
+	}
+	if cur.After(sb.time) {
+		sb.time = cur
+		return true
+	}
+
+	return false
+}
+
 func (sb *syncBuffer) Write(p []byte) (n int, err error) {
-	if sb.nbytes+uint64(len(p)) >= MaxSize {
-		if err := sb.rotateFile(time.Now()); err != nil {
+	if sb.timeHasChanged() {
+		if err := sb.rotateFile(sb.time); err != nil {
 			sb.logger.exit(err)
 		}
 	}
@@ -842,10 +898,9 @@ func (sb *syncBuffer) rotateFile(now time.Time) error {
 
 	// Write header.
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "Log file created at: %s\n", now.Format("2006/01/02 15:04:05"))
-	fmt.Fprintf(&buf, "Running on machine: %s\n", host)
-	fmt.Fprintf(&buf, "Binary: Built with %s %s for %s/%s\n", runtime.Compiler, runtime.Version(), runtime.GOOS, runtime.GOARCH)
-	fmt.Fprintf(&buf, "Log line format: [IWEF]mmdd hh:mm:ss.uuuuuu threadid file:line] msg\n")
+	fmt.Fprintf(&buf, "Log file created at: %s Running on machine: %s\n",
+		now.Format("2006/01/02 15:04:05"),
+		host)
 	n, err := sb.file.Write(buf.Bytes())
 	sb.nbytes += uint64(n)
 	return err
@@ -859,15 +914,16 @@ const bufferSize = 256 * 1024
 // createFiles creates all the log files for severity from sev down to infoLog.
 // l.mu is held.
 func (l *loggingT) createFiles(sev severity) error {
-	now := time.Now()
 	// Files are created in decreasing severity order, so as soon as we find one
 	// has already been created, we can stop.
 	for s := sev; s >= infoLog && l.file[s] == nil; s-- {
 		sb := &syncBuffer{
 			logger: l,
 			sev:    s,
+			time:   time.Now(),
 		}
-		if err := sb.rotateFile(now); err != nil {
+		sb.timeTruncate()
+		if err := sb.rotateFile(sb.Time()); err != nil {
 			return err
 		}
 		l.file[s] = sb

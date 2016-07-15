@@ -1,6 +1,25 @@
 glog
-====
+-----------------------------------
+    ###this version contains some new features:
+    ####1. log format
+    [log level] [YYYY-MM-DD hh:mm:ss] [pid] [filename:line number]> [custom msg]
+    for example :
+    INFO 2016-07-15 14:33:16.774652   17487 notify.go:54> service started
 
+    ####2. file name format
+    [module name].log.[log level].[YYYYMMDD, depends log split type]
+    for example :
+    notify.log.INFO.2016071514
+
+    ####3. log split
+    split log file by time, not pid. use logsplittype and logsplitvalue to change log split rule.
+    logsplittype means the type of log split. 0, not split; 1, split by min; 2, split by hour(default); 3, split by day.
+    logsplitvalue means the value of log split, depends flag logsplittype.(default : 1)
+    for example :
+    logsplittype = 2, logsplitvalue = 2, then split the log file per 2 hours.
+
+
+====
 Leveled execution logs for Go.
 
 This is an efficient pure Go implementation of leveled logs in the
@@ -42,3 +61,4 @@ Google, not here. The code in this repo is for export only and is not itself
 under development. Feature requests will be ignored.
 
 Send bug reports to golang-nuts@googlegroups.com.
+

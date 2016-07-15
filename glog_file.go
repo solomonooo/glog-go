@@ -39,6 +39,8 @@ var logDirs []string
 // If non-empty, overrides the choice of directory in which to write logs.
 // See createLogDirs for the full list of possible destinations.
 var logDir = flag.String("log_dir", "", "If non-empty, write log files in this directory")
+var splitType = flag.Uint("split_type", 2, "the type of log split. 0, not split; 1, split by min; 2, split by hour; 3, split by day")
+var splitValue = flag.Uint("split_value", 1, "the value of log split, depends flag logsplittype")
 
 func createLogDirs() {
 	if *logDir != "" {
@@ -81,18 +83,37 @@ func shortHostname(hostname string) string {
 // logName returns a new log file name containing tag, with start time t, and
 // the name for the symlink for tag.
 func logName(tag string, t time.Time) (name, link string) {
-	name = fmt.Sprintf("%s.%s.%s.log.%s.%04d%02d%02d-%02d%02d%02d.%d",
-		program,
-		host,
-		userName,
-		tag,
-		t.Year(),
-		t.Month(),
-		t.Day(),
-		t.Hour(),
-		t.Minute(),
-		t.Second(),
-		pid)
+	switch *splitType {
+	case 1:
+		name = fmt.Sprintf("%s.log.%s.%04d%02d%02d%02d%02d",
+			program,
+			tag,
+			t.Year(),
+			t.Month(),
+			t.Day(),
+			t.Hour(),
+			t.Minute())
+	case 2:
+		name = fmt.Sprintf("%s.log.%s.%04d%02d%02d%02d",
+			program,
+			tag,
+			t.Year(),
+			t.Month(),
+			t.Day(),
+			t.Hour())
+	case 3:
+		name = fmt.Sprintf("%s.log.%s.%04d%02d%02d",
+			program,
+			tag,
+			t.Year(),
+			t.Month(),
+			t.Day())
+	default:
+		name = fmt.Sprintf("%s.log.%s",
+			program,
+			tag)
+
+	}
 	return name, program + "." + tag
 }
 
@@ -111,7 +132,7 @@ func create(tag string, t time.Time) (f *os.File, filename string, err error) {
 	var lastErr error
 	for _, dir := range logDirs {
 		fname := filepath.Join(dir, name)
-		f, err := os.Create(fname)
+		f, err := os.OpenFile(fname, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0664)
 		if err == nil {
 			symlink := filepath.Join(dir, link)
 			os.Remove(symlink)        // ignore err
