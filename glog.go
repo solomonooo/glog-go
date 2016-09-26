@@ -669,6 +669,15 @@ func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 	l.output(s, buf, file, line, false)
 }
 
+func (l *loggingT) printfDepth(s severity, depth int, format string, args ...interface{}) {
+	buf, file, line := l.header(s, depth)
+	fmt.Fprintf(buf, format, args...)
+	if buf.Bytes()[buf.Len()-1] != '\n' {
+		buf.WriteByte('\n')
+	}
+	l.output(s, buf, file, line, false)
+}
+
 // printWithFileLine behaves like print but uses the provided file and line number.  If
 // alsoLogToStderr is true, the log message always appears on standard error; it
 // will also appear in the log file unless --logtostderr is set.
@@ -1089,6 +1098,12 @@ func (v Verbose) Info(args ...interface{}) {
 	}
 }
 
+func (v Verbose) InfoDepth(depth int, args ...interface{}) {
+	if v {
+		logging.printDepth(infoLog, depth, args...)
+	}
+}
+
 // Infoln is equivalent to the global Infoln function, guarded by the value of v.
 // See the documentation of V for usage.
 func (v Verbose) Infoln(args ...interface{}) {
@@ -1102,6 +1117,12 @@ func (v Verbose) Infoln(args ...interface{}) {
 func (v Verbose) Infof(format string, args ...interface{}) {
 	if v {
 		logging.printf(infoLog, format, args...)
+	}
+}
+
+func (v Verbose) InfofDepth(depth int, format string, args ...interface{}) {
+	if v {
+		logging.printfDepth(infoLog, depth, format, args...)
 	}
 }
 
